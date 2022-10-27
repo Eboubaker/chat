@@ -10,11 +10,11 @@ io = IO()
 
 
 def writer():
-	i = 12
-	while True:
-		io.write(i)
-		time.sleep(.4)
-		i += 1
+    i = 12
+    while True:
+        io.write(i)
+        time.sleep(.4)
+        i += 1
 
 
 t = Thread(target=writer)
