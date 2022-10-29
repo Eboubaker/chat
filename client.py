@@ -252,17 +252,6 @@ def main():
         exit(0)
     server_user.socket = s
     io.write(f"connected to {host}:{port}")
-    message = ""
-    to = "system"
-    message = message.encode('utf-8')
-    to = to.encode("utf-8")
-    data = bytearray()
-    data.extend(len(to).to_bytes(length=1, byteorder='little'))
-    data.extend(to)
-    data.extend(len(message).to_bytes(length=2, byteorder='little'))
-    data.extend(message)
-    # s.send(data)
-
     communicator = threading.Thread(target=server_interface_thread)
     communicator.daemon = True
     communicator.start()
