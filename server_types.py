@@ -7,7 +7,7 @@ from typing import List, Union, Optional
 from termcolor import colored
 
 from BufferedSocketStream import BufferedSocketStream
-from SelfThreadAwareReadWriteLock import SelfThreadAwareReadWriteLock
+from ReentrantRWLock import ReentrantRWLock
 from lib import thread_print
 
 
@@ -18,7 +18,7 @@ class DisconnectedError(Exception):
 class User:
     def __init__(self, senders: ThreadPoolExecutor, socket: sockets.socket, username=None):
         self.socket = socket
-        self.socket_lock = SelfThreadAwareReadWriteLock()
+        self.socket_lock = ReentrantRWLock()
         self.name = username if username is not None else 'user-' + str(random.randint(1, 9999))
         self.senders = senders
 
@@ -274,7 +274,7 @@ class ServerMessage(Message):
         return msg
 
     def __str__(self):
-        return 'ServerMessage{' + f'SENDER_CONTEXT={int_context_str(self.sender_context)},TARGET_CONTEXT={int_context_str(self.target_context)},TARGET={self.target},CONTENT={self.content}' + '}'
+        return 'ServerMessage{' + f'TARGET_CONTEXT={int_context_str(self.target_context)},TARGET={self.target},CONTENT={self.content}' + '}'
 
 
 def int_context_str(context: int):

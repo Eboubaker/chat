@@ -9,14 +9,14 @@ from typing import Optional
 from termcolor import colored
 
 from BufferedSocketStream import BufferedSocketStream
-from SelfThreadAwareReadWriteLock import SelfThreadAwareReadWriteLock
+from ReentrantRWLock import ReentrantRWLock
 from cli_io import IO, ReadError
 from lib import soft_join
 from server_types import ServerUser, ClientUser, Group, Message, ClientMessage, parse_args
 
 io = IO()
 
-state_lock = SelfThreadAwareReadWriteLock()
+state_lock = ReentrantRWLock()
 senders = ThreadPoolExecutor(max_workers=200, thread_name_prefix='client_senders')
 system_user = ServerUser(None, senders, username='system')
 global_group = Group('global', system_user, senders)
@@ -148,6 +148,7 @@ def interaction_thread():
         while True:
             try:
                 msg = io.input(history=input_history).strip()
+                print("msg len", len(msg))
                 input_history.append(msg)
                 if len(input_history) > 1000:
                     input_history.pop(0)

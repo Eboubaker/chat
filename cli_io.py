@@ -7,44 +7,7 @@ from typing import List, Optional
 from readchar import readkey
 from termcolor import colored
 
-from SelfThreadAwareReadWriteLock import SelfThreadAwareReadWriteLock
-
-# Here are the various escape sequences we can capture
-controls = {
-    '\x0d': 'return',
-    '\x7f': 'backspace',
-    '\x08': 'backspace',
-    '\x1b': 'escape',
-    '\x01': 'ctrl+a',
-    '\x02': 'ctrl+b',
-    '\x03': 'ctrl+c',
-    '\x04': 'ctrl+d',
-    '\x05': 'ctrl+e',
-    '\x06': 'ctrl+f',
-    '\x1a': 'ctrl+z',
-    '\x1b\x4f\x50': 'f1',
-    '\x1b\x4f\x51': 'f2',
-    '\x1b\x4f\x52': 'f3',
-    '\x1b\x4f\x53': 'f4',
-    '\x1b\x4f\x31\x35\x7e': 'f5',
-    '\x1b\x4f\x31\x37\x7e': 'f6',
-    '\x1b\x4f\x31\x38\x7e': 'f7',
-    '\x1b\x4f\x31\x39\x7e': 'f8',
-    '\x1b\x4f\x31\x30\x7e': 'f9',
-    '\x1b\x4f\x31\x31\x7e': 'f10',
-    '\x1b\x4f\x31\x33\x7e': 'f11',
-    '\x1b\x4f\x31\x34\x7e': 'f12',
-    '\x1b\x5b\x41': 'up',
-    '\x1b\x5b\x42': 'down',
-    '\x1b\x5b\x43': 'right',
-    '\x1b\x5b\x44': 'left',
-    '\x1b\x4f\x46': 'end',
-    '\x1b\x4f\x48': 'home',
-    '\x1b\x5b\x32\x7e': 'insert',
-    '\x1b\x5b\x33\x7e': 'delete',
-    '\x1b\x5b\x35\x7e': 'pageup',
-    '\x1b\x5b\x36\x7e': 'pagedown',
-}.items()
+from ReentrantRWLock import ReentrantRWLock
 
 
 class ReadError(IOError):
@@ -57,8 +20,8 @@ class IO:
         self.label = ''
         self.label_colored = ''
         self.read_lock = threading.Lock()
-        self.write_lock = threading.Lock()
-        self.buffer_lock = SelfThreadAwareReadWriteLock()
+        self.write_lock = threading.RLock()
+        self.buffer_lock = ReentrantRWLock()
         self.last_line = ''
         self.last_writer_was_reader = False
         self.read_interrupted_buffer = ''
@@ -76,43 +39,45 @@ class IO:
             self.__write_input()
 
     def __clear_input(self):
-        sys.stdout.write('\r')
-        sys.stdout.write(''.join(' ' for _ in range(len(self.last_line))))
-        sys.stdout.write('\r')
-        self.last_line = ''
-        sys.stdout.flush()
+        with self.write_lock:
+            sys.stdout.write('\r')
+            sys.stdout.write(''.join(' ' for _ in range(len(self.last_line))))
+            sys.stdout.write('\r')
+            self.last_line = ''
+            sys.stdout.flush()
 
     def __move_cursor(self, txt: str, at: int):
-        sys.stdout.write('\r')
-        sys.stdout.write(txt[:at])
-        sys.stdout.flush()
+        with self.write_lock:
+            sys.stdout.write('\r')
+            sys.stdout.write(txt[:at])
+            sys.stdout.flush()
 
     def __write_input(self, append=''):
-        self.__clear_input()
-        with self.buffer_lock.for_read():
-            self.last_line = self.label_colored + self.read_buffer + append
-            sys.stdout.write(self.last_line)
-            self.__move_cursor(self.last_line, self.cursor_at+len(self.label_colored))
-            self.last_writer_was_reader = True
+        with self.write_lock:
+            self.__clear_input()
+            with self.buffer_lock.for_read():
+                self.last_line = self.label_colored + self.read_buffer + append
+                sys.stdout.write(self.last_line)
+                self.__move_cursor(self.last_line, self.cursor_at + len(self.label_colored))
+                self.last_writer_was_reader = True
 
     def update_input_label_color(self, color):
         self.label_color = color
         self.label_colored = colored(self.label, self.label_color)
         if self.read_lock.locked():
-            with self.write_lock:
-                self.__write_input()
+            self.__write_input()
 
     def __command_left_key(self):
         with self.write_lock:
             if self.cursor_at > 0:
                 self.cursor_at -= 1
-                self.__move_cursor(self.last_line, self.cursor_at+len(self.label_colored))
+                self.__move_cursor(self.last_line, self.cursor_at + len(self.label_colored))
 
     def __command_right_key(self):
         with self.write_lock:
-            if self.cursor_at < len(self.last_line)-len(self.label_colored):
+            if self.cursor_at < len(self.last_line) - len(self.label_colored):
                 self.cursor_at += 1
-                self.__move_cursor(self.last_line, self.cursor_at+len(self.label_colored))
+                self.__move_cursor(self.last_line, self.cursor_at + len(self.label_colored))
 
     def __command_up_key(self):
         with self.write_lock:
@@ -130,7 +95,7 @@ class IO:
         with self.write_lock:
             if self.cursor_at < len(self.read_buffer):
                 # delete char after cursor
-                self.read_buffer = self.read_buffer[:self.cursor_at] + self.read_buffer[self.cursor_at+1:]
+                self.read_buffer = self.read_buffer[:self.cursor_at] + self.read_buffer[self.cursor_at + 1:]
                 self.__write_input()
 
     if os.name == 'nt':
@@ -161,8 +126,7 @@ class IO:
                     self.write(f"unhandled control: {char.encode('utf-8')}")
 
     def thread_read(self):
-        with self.write_lock:
-            self.__write_input()
+        self.__write_input()
         try:
             while True:
                 try:
@@ -171,8 +135,7 @@ class IO:
                     with self.buffer_lock.for_read():
                         self.read_interrupted_buffer = self.read_buffer
                         self.read_interrupted = True
-                    with self.write_lock:
-                        self.__clear_input()
+                    self.__clear_input()
                     break
                 # self.write(char.encode('utf-8'))
                 if len(char) > 1:
@@ -183,17 +146,15 @@ class IO:
                     with self.buffer_lock.for_write():
                         if len(self.read_buffer) != 0 and self.cursor_at > 0:
                             # delete char before cursor
-                            self.read_buffer = self.read_buffer[:self.cursor_at-1] + self.read_buffer[self.cursor_at:]
+                            self.read_buffer = self.read_buffer[:self.cursor_at - 1] + self.read_buffer[self.cursor_at:]
                             self.cursor_at -= 1
-                            with self.write_lock:
-                                self.__write_input()
+                            self.__write_input()
                     continue
                 line_feed = char == '\n' or char == '\r'
                 read_interrupted = ord(char) == 3
 
                 if line_feed or read_interrupted:
-                    with self.write_lock:
-                        self.__clear_input()
+                    self.__clear_input()
                     if read_interrupted:
                         with self.buffer_lock.for_read():
                             self.read_interrupted_buffer = self.read_buffer
@@ -231,8 +192,7 @@ class IO:
         with self.buffer_lock.for_write():
             self.read_buffer = txt
         if self.read_lock.locked():
-            with self.write_lock:
-                self.__write_input()
+            self.__write_input()
 
     def interrupted_buffer(self):
         with self.buffer_lock.for_read():

@@ -9,11 +9,11 @@ from typing import List, Optional
 from termcolor import colored
 
 from BufferedSocketStream import BufferedSocketStream
-from SelfThreadAwareReadWriteLock import SelfThreadAwareReadWriteLock
+from ReentrantRWLock import ReentrantRWLock
 from lib import soft_join, thread_print
 from server_types import Invite, Group, ServerMessage, ServerUser, Message, parse_args
 
-server_state_lock = SelfThreadAwareReadWriteLock()
+server_state_lock = ReentrantRWLock()
 senders = ThreadPoolExecutor(max_workers=200, thread_name_prefix='server_senders')
 
 system_user = ServerUser(None, senders, username='system')
