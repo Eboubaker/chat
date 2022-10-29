@@ -434,7 +434,7 @@ def handle_client(socket: sockets.socket, full_address: str):
                 message.target.send_bytes_async(
                     ServerMessage.to_client(
                         target_context=message.target_context,
-                        sender_context=message.sender_context,
+                        sender_context=Message.CONTEXT_USER,
                         target=message.target,
                         sender=this_user,
                         content=message.content,

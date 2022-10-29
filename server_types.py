@@ -174,13 +174,11 @@ class ClientMessage(Message):
     @staticmethod
     def to_server(
         target_context: int,
-        sender_context: int,
         target: str,
         content: str,
     ):
         data = bytearray()
         data.extend(ServerMessage.SIG_BYTES)
-        data.extend(sender_context.to_bytes(length=1, byteorder='little'))
         data.extend(target_context.to_bytes(length=1, byteorder='little'))
         target_bytes = target.encode('utf-8')
         data.extend(len(target_bytes).to_bytes(length=1, byteorder='little'))
@@ -221,12 +219,11 @@ def report_receive(target_context: int,
                    sender: Optional[User],
                    target: str,
                    content: str):
-    print(f"{colored('received message:', 'green')} sender:{sender.name.ljust(10)},target_ctx={int_context_str(target_context).ljust(10)},target={target.ljust(10)},content={(content[:15] + '...(truncated)') if len(content) > 15 else content}")
+    print(f"{colored('received message:', 'green')} sender:{sender.name.ljust(10)},sender_ctx={'USER'.ljust(10)},target_ctx={int_context_str(target_context).ljust(10)},target={target.ljust(10)},content={(content[:15] + '...(truncated)') if len(content) > 15 else content}")
 
 
 class ServerMessage(Message):
     target_context: int
-    sender_context: int
     target: Optional[Union[ServerUser, Group]]
     target_str: str
     content: str
@@ -263,7 +260,6 @@ class ServerMessage(Message):
         msg = ServerMessage()
         msg.sig = reader.read(2)
         assert msg.sig == ServerMessage.SIG_BYTES, f"Invalid message signature {msg.sig}"
-        msg.sender_context = int.from_bytes(reader.read(1), byteorder='little')
         msg.target_context = int.from_bytes(reader.read(1), byteorder='little')
         msg.target_str = reader.read(int.from_bytes(reader.read(1), byteorder='little')).decode('utf-8')
         msg.content = reader.read(int.from_bytes(reader.read(2), byteorder='little')).decode('utf-8')
@@ -274,7 +270,6 @@ class ServerMessage(Message):
                 target=msg.target_str,
                 content=msg.content,
             )
-        assert msg.sender_context == ServerMessage.CONTEXT_USER or msg.sender_context == ServerMessage.CONTEXT_SYSTEM, "sender can only be CONTEXT_USER or CONTEXT_SYSTEM"
         assert msg.target_context == ServerMessage.CONTEXT_GROUP or msg.target_context == ServerMessage.CONTEXT_USER, f"target can only be CONTEXT_USER or CONTEXT_GROUP got {msg.target_context}"
         return msg
 

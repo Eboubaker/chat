@@ -204,7 +204,6 @@ def interaction_thread():
                         server_user.send_bytes_async(
                             ClientMessage.to_server(
                                 target_context=Message.CONTEXT_USER,
-                                sender_context=Message.CONTEXT_USER,
                                 target=username,
                                 content=msg,
                             )
@@ -224,7 +223,6 @@ def interaction_thread():
                     server_user.send_bytes_async(
                         ClientMessage.to_server(
                             target_context=server_user.target_context,
-                            sender_context=Message.CONTEXT_USER,
                             target=server_user.target,
                             content=msg,
                         )
