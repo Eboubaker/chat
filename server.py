@@ -431,6 +431,9 @@ def handle_client(socket: sockets.socket, full_address: str):
                     if isinstance(message.target, Group) and this_user in message.target.admin.ban_list:
                         this_user.send_system_message_async(f"you are banned by {message.target.name}'s admin")
                         continue
+                if message.content.strip() == '':
+                    this_user.send_system_message_async("empty message")
+                    continue
                 # forward to target(s)
                 message.target.send_bytes_async(
                     ServerMessage.to_client(

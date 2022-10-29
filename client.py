@@ -148,8 +148,8 @@ def interaction_thread():
         while True:
             try:
                 msg = io.input(history=input_history).strip()
-                print("msg len", len(msg))
-                input_history.append(msg)
+                if len(msg) > 0:
+                    input_history.append(msg)
                 if len(input_history) > 1000:
                     input_history.pop(0)
             except KeyboardInterrupt:
@@ -220,6 +220,8 @@ def interaction_thread():
 /quit or /exit          exit
 /help                   show commands\n''')
                         pass  # show program
+                    elif msg == '':
+                        continue
                     # otherwise send to server
                     server_user.send_bytes_async(
                         ClientMessage.to_server(
