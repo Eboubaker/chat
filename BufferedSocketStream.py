@@ -18,5 +18,8 @@ class BufferedSocketStream:
                 self.size -= count
                 return part
             received = self.socket.recv(64 * 1024)
+
+            if received == b'':
+                raise ConnectionError("received 0 bytes possibly socket disconnected")
             self.buffer.extend(received)
             self.size += len(received)

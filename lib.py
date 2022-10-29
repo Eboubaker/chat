@@ -4,14 +4,14 @@ from threading import Thread
 release_joins = {'value': False}
 
 
-def soft_join(t: Thread):
+def soft_join(t: Thread, break_event: threading.Event = None):
     """
     join but interrupt on Ctrl+C
     all attempt to join after Ctrl+C will be ignored
     """
     if not t.daemon:
         assert False, "not daemon"
-    while t.is_alive() and not release_joins['value']:
+    while t.is_alive() and not release_joins['value'] and (break_event is None or not break_event.is_set()):
         try:
             t.join(.2)  # check interrupt every 200ms
         except (KeyboardInterrupt, SystemExit):  # Ctrl+C
@@ -22,4 +22,4 @@ def thread_print(msg):
     """
     print the thread id along with the message
     """
-    print(f'{threading.current_thread().name}-{str(threading.current_thread().ident)}: {msg}')
+    print(f'{threading.current_thread().name}-{str(threading.current_thread().ident)}: {msg}', flush=True)

@@ -1,37 +1,44 @@
 import random
 import socket as sockets
+import traceback
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Union
+from typing import List, Union, Optional
+
+from termcolor import colored
 
 from BufferedSocketStream import BufferedSocketStream
-from ReadWriteLock import ReadWriteLock
+from SelfThreadAwareReadWriteLock import SelfThreadAwareReadWriteLock
 from lib import thread_print
 
 
+class DisconnectedError(Exception):
+    pass
+
+
 class User:
-    def __init__(self, system_user, senders: ThreadPoolExecutor, socket: sockets.socket = None, username=None):
+    def __init__(self, senders: ThreadPoolExecutor, socket: sockets.socket, username=None):
         self.socket = socket
-        self.groups = []
-        self.socket_lock = ReadWriteLock()
+        self.socket_lock = SelfThreadAwareReadWriteLock()
         self.name = username if username is not None else 'user-' + str(random.randint(1, 9999))
-        self.system_user = system_user
         self.senders = senders
-        self.print_network = False
 
     def join_group(self, group):
         group.join_user(self)
 
-    def send_bytes(self, data: bytes):
-        self.socket_lock.acquire_write()
-        if self.print_network:
-            thread_print(f"sending to user {self.name} socket bytes f{data}")
-        try:
-            self.socket.send(data)
-        finally:
-            self.socket_lock.release_write()
-
     def send_bytes_async(self, data: bytes):
         return self.senders.submit(user_send, self, data)
+
+    def send_bytes(self, data: bytes):
+        with self.socket_lock.for_write():
+            self.socket.send(data)
+
+
+class ServerUser(User):
+    def __init__(self, system_user, senders: ThreadPoolExecutor, socket: sockets.socket = None, username=None):
+        super().__init__(senders, socket, username)
+        self.groups = []
+        self.system_user = system_user
+        self.ban_list: List[ServerUser] = []
 
     def send_system_message_async(self, message: str):
         self.send_bytes_async(
@@ -41,6 +48,7 @@ class User:
                 sender=self.system_user,
                 target=self,
                 content=message,
+                report=True,
             )
         )
 
@@ -52,19 +60,20 @@ class User:
                 sender=self.system_user,
                 target=self,
                 content=message,
+                report=True,
             )
         )
 
 
 class Invite:
-    def __init__(self, user: User, invited_by: User):
+    def __init__(self, user: ServerUser, invited_by: ServerUser):
         self.user = user
         self.invited_by = invited_by
 
 
 class Group:
-    def __init__(self, name: str, system_user: User, senders: ThreadPoolExecutor):
-        self.users = []
+    def __init__(self, name: str, system_user: ServerUser, senders: ThreadPoolExecutor):
+        self.users: List[ServerUser] = []
         self.admin = None
         self.name = name
         self.locked = False
@@ -84,23 +93,25 @@ class Group:
         for user in self.users:
             self.senders.submit(group_send, self, user, data)
 
-    def join_user(self, user: User):
-        if user not in self.users:
-            self.users.append(user)
-            user.groups.append(self)
+    def join_user(self, user: ServerUser, report: str):
+        assert user not in self.users, "can't join two times"
+        self.users.append(user)
+        user.groups.append(self)
         self.send_bytes_async(
             ServerMessage.to_client(
                 target_context=ServerMessage.CONTEXT_GROUP,
                 sender_context=ServerMessage.CONTEXT_SYSTEM,
                 sender=self.system_user,
                 target=self,
-                content=f"{self.name} has entered the group",
+                content=report,
+                report=True,
             )
         )
 
-    def remove_user(self, user: User):
+    def remove_user(self, user: ServerUser, report: str):
         assert user in self.users, "remove_user: user not joined"
         self.users.remove(user)
+        user.groups.remove(self)
         if len(self.users) > 0:
             self.send_bytes_async(
                 ServerMessage.to_client(
@@ -108,7 +119,8 @@ class Group:
                     sender_context=ServerMessage.CONTEXT_SYSTEM,
                     sender=self.system_user,
                     target=self,
-                    content=f"{user.name} has left the group",
+                    content=report,
+                    report=True,
                 )
             )
             if self.admin == user:
@@ -120,6 +132,7 @@ class Group:
                         sender=self.system_user,
                         target=self,
                         content=f"{self.admin.name} is now the group admin",
+                        report=True,
                     )
                 )
 
@@ -131,14 +144,15 @@ class Group:
                 sender=self.system_user,
                 target=self,
                 content=message,
+                report=True,
             )
         )
 
 
-def group_send(grp: Group, usr: User, dt: bytes):
+def group_send(grp: Group, usr: ServerUser, dt: bytes):
     try:
         usr.send_bytes(dt)
-    except Exception as e:
+    except BaseException as e:
         thread_print(f"group {grp.name} send fail to user {usr.name} cause {str(e)} data: {dt.decode('utf-8')}")
 
 
@@ -195,10 +209,26 @@ class ClientMessage(Message):
         return 'ClientMessage{' + f'SENDER_CONTEXT={int_context_str(self.sender_context)},TARGET_CONTEXT={int_context_str(self.target_context)},SENDER={self.sender},TARGET={self.target},CONTENT={self.content}' + '}'
 
 
+def report_send(target_context: int,
+                sender_context: int,
+                sender: Union[User, Group],
+                target: Union[User, Group],
+                content: str):
+    print(f"{colored('sending message :', 'cyan')} sender:{(sender.name if sender else 'null').ljust(10)},sender_ctx={int_context_str(sender_context).ljust(10)},target_ctx={int_context_str(target_context).ljust(10)},target={(target.name if target else 'null').ljust(10)},content={(content[:15] + '...(truncated)') if len(content) > 15 else content}")
+
+
+def report_receive(target_context: int,
+                   sender: Optional[User],
+                   target: str,
+                   content: str):
+    print(f"{colored('received message:', 'green')} sender:{sender.name.ljust(10)},target_ctx={int_context_str(target_context).ljust(10)},target={target.ljust(10)},content={(content[:15] + '...(truncated)') if len(content) > 15 else content}")
+
+
 class ServerMessage(Message):
     target_context: int
     sender_context: int
-    target: Union[User, Group]
+    target: Optional[Union[ServerUser, Group]]
+    target_str: str
     content: str
     sig: int
 
@@ -206,10 +236,13 @@ class ServerMessage(Message):
     def to_client(
         target_context: int,
         sender_context: int,
-        sender: Union[User, Group],
-        target: Union[User, Group],
+        sender: Union[ServerUser, Group],
+        target: Union[ServerUser, Group],
         content: str,
+        report: bool
     ):
+        if report:
+            report_send(target_context, sender_context, sender, target, content)
         data = bytearray()
         data.extend(ServerMessage.SIG_BYTES)
         data.extend(sender_context.to_bytes(length=1, byteorder='little'))
@@ -226,33 +259,23 @@ class ServerMessage(Message):
         return data
 
     @staticmethod
-    def from_client(reader: BufferedSocketStream, state_lock: ReadWriteLock, users: List[User],
-                    groups: List[Group]):
+    def from_client(reader: BufferedSocketStream, report_from: User = None):
         msg = ServerMessage()
         msg.sig = reader.read(2)
         assert msg.sig == ServerMessage.SIG_BYTES, f"Invalid message signature {msg.sig}"
         msg.sender_context = int.from_bytes(reader.read(1), byteorder='little')
         msg.target_context = int.from_bytes(reader.read(1), byteorder='little')
-        target = reader.read(int.from_bytes(reader.read(1), byteorder='little')).decode('utf-8')
-        assert msg.sender_context == ServerMessage.CONTEXT_USER or msg.sender_context == ServerMessage.CONTEXT_SYSTEM, \
-            "sender can only be CONTEXT_USER or CONTEXT_SYSTEM"
-        assert msg.target_context == ServerMessage.CONTEXT_GROUP or msg.target_context == ServerMessage.CONTEXT_USER, f"target can only be CONTEXT_USER or CONTEXT_GROUP got {msg.target_context}"
-        state_lock.acquire_read()
-        msg.target = None
-        try:
-            for group in groups:
-                if group.name == target:
-                    msg.target = group
-                    break
-            if not msg.target:
-                for user in users:
-                    if user.name == target:
-                        msg.target = user
-                        break
-            assert msg.target, "ServerMessage without target"
-        finally:
-            state_lock.release_read()
+        msg.target_str = reader.read(int.from_bytes(reader.read(1), byteorder='little')).decode('utf-8')
         msg.content = reader.read(int.from_bytes(reader.read(2), byteorder='little')).decode('utf-8')
+        if report_from:
+            report_receive(
+                target_context=msg.target_context,
+                sender=report_from,
+                target=msg.target_str,
+                content=msg.content,
+            )
+        assert msg.sender_context == ServerMessage.CONTEXT_USER or msg.sender_context == ServerMessage.CONTEXT_SYSTEM, "sender can only be CONTEXT_USER or CONTEXT_SYSTEM"
+        assert msg.target_context == ServerMessage.CONTEXT_GROUP or msg.target_context == ServerMessage.CONTEXT_USER, f"target can only be CONTEXT_USER or CONTEXT_GROUP got {msg.target_context}"
         return msg
 
     def __str__(self):
@@ -260,21 +283,20 @@ class ServerMessage(Message):
 
 
 def int_context_str(context: int):
-    if context == ServerMessage.CONTEXT_USER:
+    if context == Message.CONTEXT_USER:
         return 'USER'
-    elif context == ServerMessage.CONTEXT_GROUP:
+    elif context == Message.CONTEXT_GROUP:
         return 'GROUP'
-    elif context == ServerMessage.CONTEXT_SYSTEM:
+    elif context == Message.CONTEXT_SYSTEM:
         return 'SYSTEM'
     return 'UNKNOWN'
 
 
-def user_send(usr: User, dt: bytes):
+def user_send(usr: ServerUser, dt: bytes):
     try:
         usr.send_bytes(dt)
-    except Exception as e:
-        if usr.print_network:
-            thread_print(f"user {usr.name} send fail cause: {str(e)} data {dt.decode('utf-8')}")
+    except BaseException:
+        thread_print(f"send bytes to user {usr.name} failed, bytes: {dt.decode('utf-8')}, cause: {traceback.format_exc()}")
 
 
 class ClientUser(User):
@@ -282,5 +304,16 @@ class ClientUser(User):
     chat_target: str
     target_context: int
 
-    def __init__(self, system_user, senders: ThreadPoolExecutor, socket: sockets.socket = None, username=None):
-        super().__init__(system_user, senders, socket, username)
+    def __init__(self, senders: ThreadPoolExecutor, socket: sockets.socket = None, username=None):
+        super().__init__(senders, socket, username)
+
+
+def parse_args(argv: List[str]):
+    args = {}  # Dict[str, str]
+    for arg in argv:
+        try:
+            k, v = arg.split('=')
+            args[k] = v
+        except ValueError:
+            print(f"option without value: {arg} use option=value syntax")
+    return args
