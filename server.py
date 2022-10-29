@@ -415,21 +415,22 @@ def handle_client(socket: sockets.socket, full_address: str):
                     group.join_user(this_user, f"{user.name} has entered the group" if group is not global_group else f"{user.name} has re-entered the group")
                     this_user.send_system_message(f"/switch {group.name}")
             else:
-                if isinstance(message.target, Group) and this_user not in message.target.users:
-                    this_user.send_system_message_async(f"group {message.target_str} does not exist, or not subscribed")
-                    continue
-                if isinstance(message.target, ServerUser):
-                    this_user.send_system_message_async(
-                        f"You're whispering to {message.target.name}: {message.content}")
-                if isinstance(message.target, ServerUser) and this_user in message.target.ban_list:
-                    this_user.send_system_message_async(f"you are banned by {message.target.name}")
-                    continue
-                if isinstance(message.target, ServerUser) and message.target in this_user.ban_list:
-                    this_user.send_system_message_async(f"you banned {message.target.name}")
-                    continue
-                if isinstance(message.target, Group) and this_user in message.target.admin.ban_list:
-                    this_user.send_system_message_async(f"you are banned by {message.target.name}'s admin")
-                    continue
+                with server_state_lock.for_read():
+                    if isinstance(message.target, Group) and this_user not in message.target.users:
+                        this_user.send_system_message_async(f"group {message.target_str} does not exist, or not subscribed")
+                        continue
+                    if isinstance(message.target, ServerUser):
+                        this_user.send_system_message_async(
+                            f"You're whispering to {message.target.name}: {message.content}")
+                    if isinstance(message.target, ServerUser) and this_user in message.target.ban_list:
+                        this_user.send_system_message_async(f"you are banned by {message.target.name}")
+                        continue
+                    if isinstance(message.target, ServerUser) and message.target in this_user.ban_list:
+                        this_user.send_system_message_async(f"you banned {message.target.name}")
+                        continue
+                    if isinstance(message.target, Group) and this_user in message.target.admin.ban_list:
+                        this_user.send_system_message_async(f"you are banned by {message.target.name}'s admin")
+                        continue
                 # forward to target(s)
                 message.target.send_bytes_async(
                     ServerMessage.to_client(
