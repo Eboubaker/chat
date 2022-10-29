@@ -1,10 +1,9 @@
-import os
 import sys
 import threading
 import traceback
 from typing import List, Optional
 
-from readchar import readkey
+from readchar import readkey, key
 from termcolor import colored
 
 from ReentrantRWLock import ReentrantRWLock
@@ -98,32 +97,21 @@ class IO:
                 self.read_buffer = self.read_buffer[:self.cursor_at] + self.read_buffer[self.cursor_at + 1:]
                 self.__write_input()
 
-    if os.name == 'nt':
-        def handle_stroke(self, char):
-            with self.buffer_lock.for_read():
-                if char == '\x00H':
-                    self.__command_up_key()
-                elif char == '\x00P':
-                    self.__command_down_key()
-                else:
-                    # TODO: modify the code and handle it by yourself...
-                    self.write(f"unhandled control: {char.encode('utf-8')}")
-    elif os.name == 'posix':
-        def handle_stroke(self, char):
-            with self.buffer_lock.for_read():
-                if char == '\x1b[A':  # up
-                    self.__command_up_key()
-                elif char == '\x1b[B':  # bottom
-                    self.__command_down_key()
-                elif char == '\x1b[D':  # left
-                    self.__command_left_key()
-                elif char == '\x1b[C':  # right
-                    self.__command_right_key()
-                elif char == '\x1b[3~':  # right
-                    self.__command_delete_key()
-                else:
-                    # TODO: modify the code and handle it by yourself...
-                    self.write(f"unhandled control: {char.encode('utf-8')}")
+    def handle_stroke(self, char):
+        with self.buffer_lock.for_read():
+            if char == key.UP:  # up
+                self.__command_up_key()
+            elif char == key.DOWN:  # bottom
+                self.__command_down_key()
+            elif char == key.LEFT:  # left
+                self.__command_left_key()
+            elif char == key.RIGHT:  # right
+                self.__command_right_key()
+            elif char == key.DELETE:  # delete
+                self.__command_delete_key()
+            else:
+                # modify the code and add another elif and handle it by yourself...
+                self.write(f"unhandled control: {char.encode('utf-8')}")
 
     def thread_read(self):
         self.__write_input()
