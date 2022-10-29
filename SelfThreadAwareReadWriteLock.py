@@ -130,25 +130,3 @@ class SelfThreadAwareReadWriteLock(ReadWriteLock):
             return
         super().release_write()
         self.writer = None
-
-    def __enter__(self):
-        with self.ops_arr_lock:
-            if len(self.with_ops_write) == 0:
-                raise RuntimeError("ReadWriteLock: used 'with' block without call to for_read or for_write")
-        with self.ops_arr_lock:
-            write = self.with_ops_write[-1]
-        if write:
-            self.acquire_write()
-        else:
-            self.acquire_read()
-
-    def __exit__(self, exc_type, exc_value, tb):
-        with self.ops_arr_lock:
-            write = self.with_ops_write.pop()
-        if write:
-            self.release_write()
-        else:
-            self.release_read()
-        if exc_type is not None:
-            return False  # exception happened
-        return True
