@@ -164,7 +164,7 @@ def interaction_thread():
                     continue
                 continue
             except ReadError as e:
-                write_error("input-error:" + str(e) + "\ntraceback:" + traceback.format_exc())
+                write_error("input-error:" + str(e))
                 continue
             last_was_interrupt = False
             interrupt_times = 0

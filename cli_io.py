@@ -1,5 +1,7 @@
+import os
 import sys
 import threading
+import traceback
 from typing import List, Optional
 
 from readchar import readkey
@@ -53,6 +55,7 @@ class IO:
     def __init__(self):
         self.read_buffer = ''
         self.label = ''
+        self.label_colored = ''
         self.read_lock = threading.Lock()
         self.write_lock = threading.Lock()
         self.buffer_lock = SelfThreadAwareReadWriteLock()
@@ -64,9 +67,11 @@ class IO:
         self.history_tail_index = 0
         self.read_error: Optional[ReadError] = None
         self.read_interrupted = False
+        self.cursor_at = 0
 
     def update_input_label(self, label):
         self.label = label
+        self.label_colored = colored(self.label, self.label_color)
         if self.read_lock.locked():
             self.__write_input()
 
@@ -77,19 +82,83 @@ class IO:
         self.last_line = ''
         sys.stdout.flush()
 
+    def __move_cursor(self, txt: str, at: int):
+        sys.stdout.write('\r')
+        sys.stdout.write(txt[:at])
+        sys.stdout.flush()
+
     def __write_input(self, append=''):
         self.__clear_input()
         with self.buffer_lock.for_read():
-            self.last_line = colored(self.label, self.label_color) + self.read_buffer + append
+            self.last_line = self.label_colored + self.read_buffer + append
             sys.stdout.write(self.last_line)
-            sys.stdout.flush()
+            self.__move_cursor(self.last_line, self.cursor_at+len(self.label_colored))
             self.last_writer_was_reader = True
 
     def update_input_label_color(self, color):
         self.label_color = color
+        self.label_colored = colored(self.label, self.label_color)
         if self.read_lock.locked():
             with self.write_lock:
                 self.__write_input()
+
+    def __command_left_key(self):
+        with self.write_lock:
+            if self.cursor_at > 0:
+                self.cursor_at -= 1
+                self.__move_cursor(self.last_line, self.cursor_at+len(self.label_colored))
+
+    def __command_right_key(self):
+        with self.write_lock:
+            if self.cursor_at < len(self.last_line)-len(self.label_colored):
+                self.cursor_at += 1
+                self.__move_cursor(self.last_line, self.cursor_at+len(self.label_colored))
+
+    def __command_up_key(self):
+        with self.write_lock:
+            if self.history_tail_index > 0:
+                self.history_tail_index -= 1
+                self.update_input_buffer(self.history[self.history_tail_index])
+
+    def __command_down_key(self):
+        with self.write_lock:
+            if len(self.history) - 1 > self.history_tail_index:
+                self.history_tail_index += 1
+                self.update_input_buffer(self.history[self.history_tail_index])
+
+    def __command_delete_key(self):
+        with self.write_lock:
+            if self.cursor_at < len(self.read_buffer):
+                # delete char after cursor
+                self.read_buffer = self.read_buffer[:self.cursor_at] + self.read_buffer[self.cursor_at+1:]
+                self.__write_input()
+
+    if os.name == 'nt':
+        def handle_stroke(self, char):
+            with self.buffer_lock.for_read():
+                if char == '\x00H':
+                    self.__command_up_key()
+                elif char == '\x00P':
+                    self.__command_down_key()
+                else:
+                    # TODO: modify the code and handle it by yourself...
+                    self.write(f"unhandled control: {char.encode('utf-8')}")
+    elif os.name == 'posix':
+        def handle_stroke(self, char):
+            with self.buffer_lock.for_read():
+                if char == '\x1b[A':  # up
+                    self.__command_up_key()
+                elif char == '\x1b[B':  # bottom
+                    self.__command_down_key()
+                elif char == '\x1b[D':  # left
+                    self.__command_left_key()
+                elif char == '\x1b[C':  # right
+                    self.__command_right_key()
+                elif char == '\x1b[3~':  # right
+                    self.__command_delete_key()
+                else:
+                    # TODO: modify the code and handle it by yourself...
+                    self.write(f"unhandled control: {char.encode('utf-8')}")
 
     def thread_read(self):
         with self.write_lock:
@@ -105,29 +174,20 @@ class IO:
                     with self.write_lock:
                         self.__clear_input()
                     break
-
-                if char[0] == '\x00':
-                    if char == '\x00H':
-                        if self.history_tail_index > 0:
-                            self.history_tail_index -= 1
-                            self.update_input_buffer(self.history[self.history_tail_index])
-                    elif char == '\x00P':
-                        if len(self.history) - 1 > self.history_tail_index:
-                            self.history_tail_index += 1
-                            self.update_input_buffer(self.history[self.history_tail_index])
-                    else:
-                        # TODO: modify the code and handle it by yourself...
-                        self.write(f"unhandled control: {char.encode('utf-8')}")
+                # self.write(char.encode('utf-8'))
+                if len(char) > 1:
+                    self.handle_stroke(char)
                     continue
-
                 delchr = ord(char) == 8 or ord(char) == 127
                 if delchr:
                     with self.buffer_lock.for_write():
-                        if len(self.read_buffer) != 0:
-                            self.read_buffer = self.read_buffer[:-1]
+                        if len(self.read_buffer) != 0 and self.cursor_at > 0:
+                            # delete char before cursor
+                            self.read_buffer = self.read_buffer[:self.cursor_at-1] + self.read_buffer[self.cursor_at:]
+                            self.cursor_at -= 1
                             with self.write_lock:
                                 self.__write_input()
-                            continue
+                    continue
                 line_feed = char == '\n' or char == '\r'
                 read_interrupted = ord(char) == 3
 
@@ -142,12 +202,12 @@ class IO:
                 if ord(char) <= 31:
                     continue  # control character
                 with self.write_lock:
-                    self.__write_input(char)
-
-                with self.buffer_lock.for_write():
-                    self.read_buffer += char
-        except BaseException as e:
-            self.read_error = ReadError(e)
+                    with self.buffer_lock.for_write():
+                        self.read_buffer = self.read_buffer[:self.cursor_at] + char + self.read_buffer[self.cursor_at:]
+                        self.cursor_at += 1
+                    self.__write_input()
+        except BaseException:
+            self.read_error = traceback.format_exc()
             return
 
     def write(self, txt: object, new_line=True):
@@ -189,6 +249,7 @@ class IO:
             self.read_interrupted = False
             if label is not None:
                 self.update_input_label(label)
+            self.cursor_at = 0
             if color is not None:
                 self.update_input_label_color(color)
             t = threading.Thread(target=self.thread_read)
@@ -203,5 +264,5 @@ class IO:
             if self.read_error:
                 err = self.read_error
                 self.read_error = None
-                raise err
+                raise ReadError(err)
             return v
